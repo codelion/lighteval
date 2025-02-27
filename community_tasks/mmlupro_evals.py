@@ -72,6 +72,7 @@ MMLU_PRO_TASK = LightevalTaskConfig(
 # Add to the tasks table
 TASKS_TABLE = [MMLU_PRO_TASK]
 
+#lighteval accelerate "pretrained=deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" "community_tasks|mmlu_pro|0|0" --custom-tasks community_tasks/mmlupro_evals.py
 # Define task groups to make the custom suite work
 TASKS_GROUPS = {
     "custom": ["mmlu_pro"]
