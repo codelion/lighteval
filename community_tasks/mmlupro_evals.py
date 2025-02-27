@@ -4,7 +4,7 @@ from lighteval.metrics import Doc
 
 def mmlu_pro_prompt(line, task_name: str = None):
     """
-    Format MMLU-Pro prompts as specified in the original task
+    Format MMLU-Pro prompts for compatibility with lighteval.
     
     Args:
         line: A line from the MMLU-Pro dataset
@@ -16,43 +16,38 @@ def mmlu_pro_prompt(line, task_name: str = None):
     question = line["question"]
     options = line["options"]
     
-    # The dataset actually uses letters (like 'I') instead of numbers for answers
-    # Use answer_index if available, otherwise the answer is the letter/string itself
+    # Determine the correct answer index (0-based)
     if "answer_index" in line:
-        gold_index = line["answer_index"]
+        answer_idx = line["answer_index"]
+    elif isinstance(line.get("answer"), int) and line["answer"] > 0:
+        answer_idx = line["answer"] - 1  # Convert 1-based to 0-based
+    elif isinstance(line.get("answer"), str) and line["answer"].isdigit():
+        answer_idx = int(line["answer"]) - 1
+    elif isinstance(line.get("answer"), str) and len(line["answer"]) == 1 and line["answer"].isalpha():
+        # Convert letter to 0-based index (A=0, B=1, etc.)
+        answer_idx = ord(line["answer"].upper()) - ord('A')
     else:
-        # If we only have the answer as a letter (like 'I'), we need to convert it
-        answer = line["answer"]
-        # If the answer is a letter (A, B, C...), convert it to a zero-indexed number
-        if isinstance(answer, str) and len(answer) == 1 and answer.isalpha():
-            # Convert from letter to index (A=0, B=1, C=2, etc.)
-            gold_index = ord(answer.upper()) - ord('A')
-        # If the answer is a number as a string ('1', '2', etc.), convert to zero-indexed
-        elif isinstance(answer, str) and answer.isdigit():
-            gold_index = int(answer) - 1
-        # If the answer is already a number, just subtract 1 to make it zero-indexed
-        elif isinstance(answer, int):
-            gold_index = answer - 1
-        else:
-            # If we can't determine the index, use 0 as a fallback
-            print(f"Warning: Could not determine gold_index for answer: {answer}")
-            gold_index = 0
+        answer_idx = 0  # Default to first option
     
-    # Create formatted choices for the Doc
-    choices = []
+    # Format options for the Doc object
+    formatted_options = []
     for option in options:
-        choices.append(f" {option}")
+        formatted_options.append(f" {option}")
     
-    # Return a Doc object with properly formatted content
+    # Important: Put the instruction at the beginning of the query
+    instruction = "Answer with the number of the correct option."
+    formatted_query = f"{instruction} {question}"
+    
+    # Return Doc object
     return Doc(
         task_name=task_name,
-        query=question,
-        choices=choices,
-        gold_index=gold_index,
-        instruction=""
+        query=formatted_query,
+        choices=formatted_options,
+        gold_index=answer_idx,
+        instruction=instruction  # Include the instruction here as well
     )
 
-# Define the MMLU-Pro task using the exact_match metric
+# Define the MMLU-Pro task
 MMLU_PRO_TASK = LightevalTaskConfig(
     name="mmlu_pro",
     suite=["custom"],
@@ -65,15 +60,14 @@ MMLU_PRO_TASK = LightevalTaskConfig(
     few_shots_select="random",
     generation_size=-1,  # -1 for multiple-choice tasks
     stop_sequence=None,
-    metric=[Metrics.exact_match],  # Using the Metrics enum value
+    metric=[Metrics.exact_match],  # Use the enum value, not a string
     trust_dataset=True
 )
 
 # Add to the tasks table
 TASKS_TABLE = [MMLU_PRO_TASK]
 
-#lighteval accelerate "pretrained=deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B" "community_tasks|mmlu_pro|0|0" --custom-tasks community_tasks/mmlupro_evals.py
-# Define task groups to make the custom suite work
+# Define task groups
 TASKS_GROUPS = {
     "custom": ["mmlu_pro"]
 }
