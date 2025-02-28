@@ -142,57 +142,73 @@ class LiteLLMClient(LightevalModel):
 
     def __call_api(self, prompt, return_logits, max_new_tokens, num_samples, stop_sequence):
         """Make API call with retries."""
-        response = ModelResponse()
+        response = None
         for attempt in range(self.API_MAX_RETRY):
             try:
                 stop_sequence = self._prepare_stop_sequence(stop_sequence)
                 max_new_tokens = self._prepare_max_new_tokens(max_new_tokens)
-
+    
                 if return_logits and not self.provider == "openai":
                     logger.warning("Returning logits is not supported for this provider, ignoring.")
-
+    
+                # Format the messages parameter correctly based on input type
+                if isinstance(prompt, str):
+                    # Convert string to proper message format
+                    messages = [{"role": "user", "content": prompt}]
+                elif isinstance(prompt, list) and all(isinstance(item, dict) for item in prompt):
+                    # Already in proper format
+                    messages = prompt
+                else:
+                    # Handle unexpected format
+                    logger.warning(f"Unexpected prompt format: {type(prompt)}. Converting to user message.")
+                    messages = [{"role": "user", "content": str(prompt)}]
+    
                 # Prepare kwargs for completion call
                 kwargs = {
                     "model": self.model,
-                    "messages": prompt,
+                    "messages": messages,  # Use the correctly formatted messages
                     "logprobs": return_logits if self.provider == "openai" else None,
                     "base_url": self.base_url,
                     "n": num_samples,
                     "caching": True,
                     "api_key": self.api_key,
                 }
+                
                 if "o1" in self.model:
                     logger.warning("O1 models do not support temperature, top_p, stop sequence. Disabling.")
                 else:
-                    kwargs.update(self.generation_parameters.to_litellm_dict())
-
+                    if hasattr(self, 'generation_parameters') and self.generation_parameters is not None:
+                        if hasattr(self.generation_parameters, 'to_litellm_dict'):
+                            gen_params = self.generation_parameters.to_litellm_dict()
+                            if isinstance(gen_params, dict):
+                                kwargs.update(gen_params)
+    
                 if kwargs.get("max_completion_tokens", None) is None:
                     kwargs["max_completion_tokens"] = max_new_tokens
-
+                    
+                # Add stop sequences if provided
+                if stop_sequence:
+                    kwargs["stop"] = stop_sequence
+    
                 response = litellm.completion(**kwargs)
-
-                # If response is empty, retry without caching (maybe the error is recoverable and solved with a retry)
-                if response.choices[0].message.content is None:
-                    kwargs["caching"] = False
-                    logger.info("Response is empty, retrying without caching")
-                    response = litellm.completion(**kwargs)
+    
+                # If response is empty, retry without caching
+                if response and hasattr(response, 'choices') and response.choices and len(response.choices) > 0:
+                    if response.choices[0].message.content is None:
+                        kwargs["caching"] = False
+                        logger.info("Response is empty, retrying without caching")
+                        response = litellm.completion(**kwargs)
                 return response
-            except litellm.BadRequestError as e:
-                if "message" in e.__dict__:
-                    error_string = (
-                        "The response was filtered due to the prompt triggering Microsoft's content management policy"
-                    )
-                    if error_string in e.__dict__["message"]:
-                        logger.warning(f"{error_string}. Returning empty response.")
-                        return ModelResponse()
+                
             except Exception as e:
-                wait_time = min(64, self.API_RETRY_SLEEP * (2**attempt))  # Exponential backoff with max 64s
+                wait_time = min(64, self.API_RETRY_SLEEP * (2**attempt))
                 logger.warning(
                     f"Error in API call: {e}, waiting {wait_time} seconds before retry {attempt + 1}/{self.API_MAX_RETRY}"
                 )
                 time.sleep(wait_time)
-
+    
         logger.error(f"API call failed after {self.API_MAX_RETRY} attempts, returning empty response.")
+        from litellm.utils import ModelResponse
         return ModelResponse()
 
     def __call_api_parallel(
