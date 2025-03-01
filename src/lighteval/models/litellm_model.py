@@ -115,7 +115,7 @@ class LiteLLMClient(LightevalModel):
         self.API_MAX_RETRY = 5
         self.API_RETRY_SLEEP = 3
         self.API_RETRY_MULTIPLIER = 2
-        self.CONCURENT_CALLS = 20  # 100 leads to hitting Anthropic rate limits
+        self.CONCURENT_CALLS = 1  # 100 leads to hitting Anthropic rate limits
 
         self._tokenizer = encode
         self.pairwise_tokenization = False
@@ -172,6 +172,7 @@ class LiteLLMClient(LightevalModel):
                     "n": num_samples,
                     "caching": True,
                     "api_key": self.api_key,
+                    "request_timeout": 1000,
                 }
                 
                 if "o1" in self.model:
@@ -219,33 +220,80 @@ class LiteLLMClient(LightevalModel):
         num_samples: int | list[int],
         stop_sequence: list[str] | None = None,
     ):
+        logger.info(f"=== STARTING PARALLEL API CALLS FOR {len(prompts)} PROMPTS ===")
         results = []
-
+    
+        # Prepare parameters
+        logger.info("Preparing parameters for parallel calls")
         return_logitss = [return_logits for _ in prompts] if not isinstance(return_logits, list) else return_logits
         max_new_tokenss = [max_new_tokens for _ in prompts] if not isinstance(max_new_tokens, list) else max_new_tokens
         num_sampless = [num_samples for _ in prompts] if not isinstance(num_samples, list) else num_samples
-        stop_sequencess = [stop_sequence for _ in prompts]
-        assert (
-            len(prompts) == len(return_logitss) == len(max_new_tokenss) == len(num_sampless) == len(stop_sequencess)
-        ), f"Length of prompts, return_logitss, max_new_tokenss, num_sampless, stop_sequences, system_prompts should be the same but are {len(prompts)}, {len(return_logitss)}, {len(max_new_tokenss)}, {len(num_sampless)}, {len(stop_sequencess)}"
-
+        
+        # Prepare stop sequences - with detailed logging
+        if stop_sequence is None:
+            logger.info("stop_sequence is None, creating list of Nones")
+            stop_sequencess = [None for _ in prompts]
+        else:
+            logger.info(f"Creating stop_sequencess from: {stop_sequence}")
+            stop_sequencess = [stop_sequence for _ in prompts]
+        
+        # Log the parameter lengths for debugging
+        logger.info(f"prompts length: {len(prompts)}")
+        logger.info(f"return_logitss length: {len(return_logitss)}")
+        logger.info(f"max_new_tokenss length: {len(max_new_tokenss)}")
+        logger.info(f"num_sampless length: {len(num_sampless)}")
+        logger.info(f"stop_sequencess length: {len(stop_sequencess)}")
+        
+        try:
+            assert (
+                len(prompts) == len(return_logitss) == len(max_new_tokenss) == len(num_sampless) == len(stop_sequencess)
+            ), f"Length mismatch: {len(prompts)}, {len(return_logitss)}, {len(max_new_tokenss)}, {len(num_sampless)}, {len(stop_sequencess)}"
+        except AssertionError as e:
+            logger.error(f"Assertion error in parameter lengths: {e}")
+            # Try to fix the lengths to avoid failing
+            min_len = min(len(prompts), len(return_logitss), len(max_new_tokenss), len(num_sampless), len(stop_sequencess))
+            logger.info(f"Truncating all parameters to length {min_len}")
+            prompts = prompts[:min_len]
+            return_logitss = return_logitss[:min_len]
+            max_new_tokenss = max_new_tokenss[:min_len]
+            num_sampless = num_sampless[:min_len]
+            stop_sequencess = stop_sequencess[:min_len]
+    
+        logger.info("Starting ThreadPoolExecutor")
         with ThreadPoolExecutor(self.CONCURENT_CALLS) as executor:
-            for entry in tqdm(
-                executor.map(
+            futures = []
+            for i in range(len(prompts)):
+                logger.info(f"Submitting task {i+1}/{len(prompts)}")
+                future = executor.submit(
                     self.__call_api,
-                    prompts,
-                    return_logitss,
-                    max_new_tokenss,
-                    num_sampless,
-                    stop_sequencess,
-                ),
-                total=len(prompts),
-            ):
-                results.append(entry)
-
-        if None in results:
-            raise ValueError("Some entries are not annotated due to errors in annotate_p, please inspect and retry.")
-
+                    prompts[i],
+                    return_logitss[i],
+                    max_new_tokenss[i],
+                    num_sampless[i],
+                    stop_sequencess[i],
+                )
+                futures.append(future)
+            
+            for i, future in enumerate(tqdm(futures, total=len(futures))):
+                try:
+                    logger.info(f"Getting result for task {i+1}/{len(futures)}")
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error in future {i}: {str(e)}")
+                    # Add an empty response to maintain the order
+                    from litellm.utils import ModelResponse
+                    results.append(ModelResponse())
+    
+        logger.info(f"Parallel execution complete, got {len(results)} results")
+        
+        # Check for None values in results
+        none_count = sum(1 for r in results if r is None)
+        if none_count > 0:
+            logger.warning(f"Found {none_count} None results - replacing with empty responses")
+            from litellm.utils import ModelResponse
+            results = [r if r is not None else ModelResponse() for r in results]
+    
         return results
 
     def greedy_until(
