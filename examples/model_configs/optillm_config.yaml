@@ -1,0 +1,13 @@
+model:
+  base_params:
+    model_name: "openai/thinkdeeper-observe"
+    base_url: "http://localhost:8000/v1"
+    api_key: "no_key" # remove or keep empty as needed
+  generation:
+    temperature: 0.6
+    max_new_tokens: 8192
+    stop_tokens: [""]
+    top_p: 0.9
+    seed: 0
+    repetition_penalty: 1.0
+    frequency_penalty: 0.0
