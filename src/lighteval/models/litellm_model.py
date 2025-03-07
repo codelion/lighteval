@@ -170,7 +170,8 @@ class LiteLLMClient(LightevalModel):
                     "logprobs": return_logits if self.provider == "openai" else None,
                     "base_url": self.base_url,
                     "n": num_samples,
-                    "caching": True,
+                    # "caching": True,
+                    "caching": False,
                     "api_key": self.api_key,
                     "request_timeout": 1000,
                 }
