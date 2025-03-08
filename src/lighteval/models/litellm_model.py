@@ -112,7 +112,7 @@ class LiteLLMClient(LightevalModel):
         self.api_key = config.api_key
         self.generation_parameters = config.generation_parameters
 
-        self.API_MAX_RETRY = 5
+        self.API_MAX_RETRY = 1 # usually it timesout everytime
         self.API_RETRY_SLEEP = 3
         self.API_RETRY_MULTIPLIER = 2
         self.CONCURENT_CALLS = 1  # 100 leads to hitting Anthropic rate limits
