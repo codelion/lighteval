@@ -130,3 +130,5 @@ pre-commit run --all-files
   url = {https://github.com/huggingface/lighteval}
 }
 ```
+
+lighteval endpoint litellm "examples/model_configs/optillm_config.yaml" "lighteval|gpqa:diamond|0|0"
